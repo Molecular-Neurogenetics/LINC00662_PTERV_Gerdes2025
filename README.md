@@ -5,11 +5,11 @@ The project integrates bulk RNA-seq, single-nuclei RNA-seq, CRISPRi of LINC00662
 
 ## Repository Structure
 
-### `human_chimp_org/`
+### `bulkRNA_org_human_chimp/`
 Bulk RNA-seq analysis of human and chimpanzee cerebral organoids.  
 Includes mapping workflow (Snakemake), differential expression, and visualizations.
 
-### `bulkRNA_org_human_chimp/`
+### `human_chimp_org/`
 Single-nuclei RNA-seq of human and chimpanzee organoids.  
 Contains UMAP generation, clustering, marker gene analysis, and metadata tables.
 
