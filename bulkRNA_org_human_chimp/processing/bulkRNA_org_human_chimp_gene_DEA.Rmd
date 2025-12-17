@@ -1,0 +1,246 @@
+---
+title: "MN10 differential expression analysis human and chimp fbNPCs"
+output: html_notebook
+---
+
+Here we perform differential expression analysis (DEA) of genes for our CRISPR experiments targeting young L1 elements.
+
+The experimental design is CRISPR inhibition on iPSC where L1s are usually highly expressed, and CRISPR activation on neural progenitor cells.
+The two experiments were sequenced in two sequencing runs each (three sequencing runs total). 
+
+Before we start, I load libraries and define some helper functions to visualize the effect as a mean plot (credits to Per Brattås! who wrote the original code for it)
+
+```{r class.source = 'fold-hide'}
+## getSignName ##
+# Get significantly different gene names. 
+# Taken from source code of the package deseqAbstraction which is no longer available on github.
+# Credits to Per L. Brattås
+# Parameters:
+# x = results object from deseq
+# p = padj threshold for significance
+# l = log2FC threshold for significance
+getSignName <- function(x,p,l=0) {
+  up <- x[!is.na(x$padj) & x$padj < p & x$log2FoldChange > l,]
+  down <- x[!is.na(x$padj) & x$padj < p & x$log2FoldChange < -l,]
+  return(list(up=rownames(up),down=rownames(down)))
+}
+## getAverage ##
+# Get average expression (normalized by median of ratios) of each of the conditions in a deseq object.
+# Taken from source code of the package deseqAbstraction which is no longer available on github.
+# Credits to Per L. Brattås
+# Parameters:
+# dds = deseq object
+getAverage <- function(dds) {
+  baseMeanPerLvl <- sapply( levels(dds$species), function(lvl) rowMeans( counts(dds,normalized=TRUE)[,dds$species == lvl] ) )
+  baseSDPerLvl <- sapply( levels(dds$species), function(lvl) apply( counts(dds,normalized=TRUE)[,dds$species == lvl],1,sd ) )
+  colnames(baseSDPerLvl) <- paste("st.dev:",colnames(baseSDPerLvl),sep="")
+  return(list(Mean=baseMeanPerLvl,SD=baseSDPerLvl))
+}
+
+meanPlot_cus <- function(exp,test,c1 = "condition 1",c2 = "condition 2",p=.05,l=0,id=F, ttl="", 
+                         repel=TRUE, col1="tomato", col2="darkturquoise", col3="grey", highlights=NA){
+  sign <- getSignName(x = test,p = p,l = l)
+  u <- sign$up
+  d <- sign$down
+  
+  #color up and down sign..
+  colVec <- ifelse(test = (rownames(exp) %in% u),
+                   yes = col1,
+                   no = ifelse(test = (rownames(exp) %in% d),
+                               yes = col2, no =col3))
+  colVec[is.na(colVec)] <- "steelblue" ## if NA make sure it's not counted as <p
+  #size of points
+  cexVec <- ifelse(test = (rownames(exp) %in% u),
+                   yes = 0.35,
+                   no = ifelse(test = (rownames(exp) %in% d),
+                               yes = 0.35, no = 0.3))
+  
+  exp_log <- as.data.frame(log2(exp[,c(c1, c2)] + 0.5))
+  exp_log$Name <- rownames(exp_log)
+  
+  exp_log$reg <- factor(ifelse(exp_log$Name %in% u, paste('upregulated in ', c1, ' (', length(u), ')', sep =''),
+                               ifelse(exp_log$Name %in% d, paste('downregulated in ', c1,' (', length(d), ')', sep =''), paste('not significant', ' (', (nrow(test) - length(u) - length(d)), ')', sep=''))))
+  
+  library(ggrepel)
+  if(repel == TRUE){
+    plt <- ggplot(exp_log, aes(x=get(c2), y=get(c1), label=Name, color=reg)) + geom_point(aes(size=cexVec), alpha=0.7)+ scale_color_manual(values=c(col2, col3, col1))+ scale_size_continuous(range=c(1,2), guide="none")+ geom_text_repel(data = subset(exp_log, Name %in% u | Name %in% d),direction    = "y", nudge_y = 0.4, nudge_x = -0.5)
+  }
+  else{
+    plt <- ggplot(exp_log, aes(x=get(c2), y=get(c1), color=reg)) + geom_point(aes(size=cexVec), alpha=0.7)+ scale_color_manual(values=c(col2, col3, col1))+ scale_size_continuous(range=c(1,2), guide="none")
+  }
+  plt <- plt + labs(x=paste("log2(mean ",c2,")",sep=""), 
+                    y=paste("log2(mean ",c1,")",sep=""),
+                    title=paste(ttl, paste(c1," vs. ",c2,sep=""), sep = ': '),
+                    subtitle=paste("p-adj < ",p,", log2(fc) > ",l,sep=""))+ theme_bw() +
+    theme( plot.title = element_text( size=14, face="bold"), text = element_text(size=15), panel.grid.minor = element_blank(), panel.grid.major = element_blank(), legend.title=element_blank()) 
+  
+  
+  if(id==T) {
+    
+    identify(log2(exp[,1]),log2(exp[,2]),labels = rownames(exp))
+    
+  }
+  
+  if(!is.na(highlights)){
+    plt <- plt + geom_point(data=exp_log[highlights,], aes(x=get(c2), y=get(c1)), colour="springgreen3", size=5, shape=1, stroke=2)
+  }
+  return(plt)
+  
+}
+```
+
+Loading gene count matrices
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+library(DESeq2)
+library(bedr)
+
+samplesheet <- fread("/Volumes/MyPassport/MN10/bulk/tables/samplesheet.tab", data.table = F, header = T)
+
+```
+
+```{r}
+path <- "/Volumes/MyPassport/MN10/gene_counts/unique/"
+samples <- samplesheet$sample
+
+for(i in 1:length(samples)){
+  sample <- samples[i]
+  if(i == 1){
+    gene_counts <- fread(paste(path, sample, "_gene_count_matrix_2.csv", sep=""), data.table = F)    
+    colnames(gene_counts)[ncol(gene_counts)] <- sample
+    rownames(gene_counts) <- gene_counts$Geneid
+    row_order <- rownames(gene_counts)
+  }else{
+    tmp <- fread(paste(path, sample, "_gene_count_matrix_2.csv", sep=""), data.table = F)
+    colnames(tmp)[ncol(tmp)] <- sample
+    rownames(tmp) <- tmp$Geneid
+    gene_counts <- cbind(gene_counts[row_order,], tmp[row_order,sample,drop=F])
+  }
+}
+```
+
+## Cell type markers
+
+Normalization using sizeFactors calculated with all samples. 
+```{r}
+rownames(samplesheet) <- samplesheet$sample
+rownames(gene_counts) <- (gene_counts$Geneid)
+gene_dds <- DESeqDataSetFromMatrix(gene_counts[,rownames(samplesheet)], samplesheet, design =  ~ species)
+gene_dds$species <- relevel(gene_dds$species, "chimp")
+gene_dds <- DESeq(gene_dds)
+
+write.table(as.data.frame(gene_dds$sizeFactor), file = "/Volumes/MyPassport/MN10/tables/gene_sizeFactors.tab", quote = F, sep="\t", col.names = F)
+
+gene_count_norm <- counts(gene_dds, normalized=T)
+neuronal_genes <- c("WNT3", "POU3F2", "NEUROD4", "NEUROG2", "FOXG1", "NEUROD1", "SOX11", "NES", "SOX1", "SOX2", "ASCL1", "DCX", "NCAM1", "MAP2")
+ectoderm <- c("HES5", "PAMR1", "PAX6")
+endoderm <- c("CER1", "EOMES", "GATA6")
+mesoderm <- c("APLNR", "HAND1", "HOXB7")
+trophectoderm <- c("GATA3", "PTGES", "PDGFA")
+
+pluripotency_genes <- c("POU5F1", "NANOG")
+
+markers <- data.frame(gene = c("neuronal" = neuronal_genes, 
+                        "pluripotency" = pluripotency_genes, 
+                        "ectoderm" = ectoderm, 
+                        "endoderm" = endoderm, 
+                        "mesoderm" = mesoderm, 
+                        "trophectoderm" = trophectoderm))
+markers$type <- gsub("^\\d+|\\d+$", "", rownames(markers))    
+rownames(markers) <- markers$gene
+
+library(pheatmap)
+pdf("/Volumes/MyPassport/MN10/results/plots/markers_heatmaps.pdf", height = 12, width = 7)
+pheatmap(log2(gene_count_norm[c("LINC00662", markers$gene),rownames(samplesheet)]+0.5), cluster_cols = F, cluster_rows = F, scale = "none", main = "Human / Chimp organoids day 15", annotation_col = samplesheet[,c("cellline", "species")], annotation_row = markers[,"type", drop=F])
+
+pheatmap(log2(gene_count_norm[c("LINC00662", markers$gene),rownames(samplesheet)]+0.5), cluster_cols = F, cluster_rows = F, scale = "row", main = "Human / Chimp organoids day 15 (scale row)", annotation_col = samplesheet[,c("cellline", "species")], annotation_row = markers[,"type", drop=F])
+dev.off()
+
+```
+
+```{r}
+gene_res <- lfcShrink(gene_dds, "species_human_vs_chimp")
+gene_exp <- getAverage(gene_dds)
+gene_res_df <- as.data.frame(gene_res)
+gene_res_df$gene_name <- rownames(gene_res_df)
+gene_vst <- varianceStabilizingTransformation(gene_dds)
+```
+
+```{r}
+pdf("/Volumes/MyPassport/MN10/results/plots/gene_PCAs.pdf")
+plotPCA(gene_vst, intgroup="species") + ggtitle("All samples: Species") + theme_bw()
+plotPCA(gene_vst, intgroup="cellline") + ggtitle("All samples: Cell line") + theme_bw()
+dev.off()
+```
+
+## Visualization
+
+Mean plots, volcano plots and excel tables...
+```{r}
+library(EnhancedVolcano)
+
+# openxlsx::write.xlsx(gene_res_df, file = "/Volumes/MyPassport/MN10/results/tables/genes_DEA_human_vs_chimp.xlsx")
+
+tmp <- EnhancedVolcano(gene_res, 
+                       drawConnectors = T, 
+                       lab = NA, 
+                       x = 'log2FoldChange',
+                       y = 'padj',
+                       pCutoff = 0.05,
+                       FCcutoff = 1)
+tmp$data$Sig <- ifelse(tmp$data$log2FoldChange > 1 & tmp$data$Sig == "FC_P", "Upregulated", 
+                                           ifelse(tmp$data$log2FoldChange < -1 & tmp$data$Sig == "FC_P", "Downregulated", "Not significant"))
+tmp$data$Sig <- paste(tmp$data$Sig, table(tmp$data$Sig)[tmp$data$Sig], sep = ": ")
+
+not_sig_lab <- unique(tmp$data$Sig)[startsWith(unique(tmp$data$Sig), "Not significant")]
+up_sig_lab <- unique(tmp$data$Sig)[startsWith(unique(tmp$data$Sig), "Upregulated")]
+down_sig_lab <- unique(tmp$data$Sig)[startsWith(unique(tmp$data$Sig), "Downregulated")]
+
+point_colours <- c("grey","darkturquoise", "tomato")
+names(point_colours) <- c(not_sig_lab, down_sig_lab, up_sig_lab)
+point_sizes <- c(1,2,2)
+names(point_sizes) <- c(not_sig_lab, down_sig_lab, up_sig_lab)  
+
+tmp <- tmp$data
+volcano_plot <- ggplot(tmp, aes(x=log2FoldChange, y=-log10(padj), colour=Sig, size=Sig)) + geom_point(alpha=0.7) + 
+  geom_vline(xintercept = 1, linetype="dotted") + geom_vline(xintercept = -1, linetype="dotted") + 
+  geom_hline(yintercept = -log10(0.05), linetype="dotted") + labs(colour="") + 
+  scale_color_manual(values = point_colours)  + 
+  scale_size_manual(values = point_sizes, guide="none") +
+  theme_bw() +
+  theme(text = element_text(size=15), panel.grid.minor = element_blank(), panel.grid.major = element_blank()) + ggtitle("Organoids day 15: human vs. chimp") + 
+  geom_point(data=tmp["LINC00662",], aes(x=log2FoldChange, y=-log10(padj)), colour="springgreen3", size=5, shape=1, stroke=2)
+
+mean_plot <- meanPlot_cus(exp = gene_exp$Mean, 
+             test = gene_res, highlights = "LINC00662",
+             c1 = "human", c2="chimp", ttl = "Organoids day 15", p = 0.05, l=1, repel = F)
+  
+
+pdf("/Volumes/MyPassport/MN10/results/plots/genes_DEA_volcano_mean_plots.pdf", height = 4, width = 7)
+volcano_plot
+mean_plot
+dev.off()
+```
+
+```{r}
+genes_to_check <- c("ANK3","AOAH","BTBD9","CFAP61","CORIN","CPQ","DTNA","FGF13","GABRB1","KCNH8","KIF15","LRP1B","MIPEP","NMNAT2","NOTCH2","TBL1Y","TTC37","TTTY14","ZNF713","ZNF793","ABCA12","AC004538.3","AC022201.4","CTC-459F4.3","DEFB131B","ENPP7P4","GHITM","LINC00662","LINC02406","LINC02614","MIR548I1","MSC","MSC-AS1","NPM1P11","OR7E126P","OR7E128P","PSPHP1","RP1-296G17.4","RP11-338I21.1","RP11-379B18.1","RP11-379B18.6","RP11-379B18.7","RP11-379B18.8","RP11-379B18.9","RP11-849H4.2","RP5-1015P16.1","RPL10P6","RPS20P20","RPS3AP14","SNHG31","SNORA70I","SNRPCP11","TGFA","THSD7A")
+
+genes_to_check_expressed <- genes_to_check[which(rowSums(gene_count_norm[genes_to_check,rownames(samplesheet)]) > 0)]
+
+openxlsx::write.xlsx(gene_res_df[genes_to_check_expressed,], file = "/Volumes/MyPassport/MN10/results/tables/genes_DEA_human_vs_chimp_top_hits_PTERV1.xlsx")
+
+genes_to_check_expressed_logfc1 <- rownames(gene_res_df[which(abs(gene_res_df$log2FoldChange) > 1 & gene_res_df$padj < 0.05 & rownames(gene_res_df) %in% genes_to_check_expressed),])
+
+pdf("/Volumes/MyPassport/MN10/results/plots/top_hits_heatmap.pdf", height = 12, width = 7)
+pheatmap(log2(gene_count_norm[genes_to_check_expressed_logfc1,rownames(samplesheet)]+0.5), cluster_cols = F,  scale = "none", main = "Human / Chimp organoids day 15\n|logFC| > 1; padj < 0.05", annotation_col = samplesheet[,c("cellline", "species")])
+
+pheatmap(log2(gene_count_norm[genes_to_check_expressed_logfc1,rownames(samplesheet)]+0.5), cluster_cols = F, scale = "row", main = "Human / Chimp organoids day 15 (scale row)\n|logFC| > 1; padj < 0.05", annotation_col = samplesheet[,c("cellline", "species")])
+dev.off()
+
+# save.image("/Volumes/MyPassport/MN10/src/r_scripts/gene_DEA.RData")
+```
+
