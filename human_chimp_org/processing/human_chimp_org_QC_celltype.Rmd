@@ -1,0 +1,451 @@
+---
+title: "L1-CRISPRi organoids: Cell typing"
+output: html_notebook
+---
+
+This markdown relates to the visualization of day 15 cerebral organoids.
+
+Main questions:
+1. Cell type composition
+2. Nuclei composition between conditions
+3. Do L1-CRISPRi and control organoids significantly differ in cell type composition?
+4. What are the consistently downregulated genes (mostly on-target)? Are they enriched in any specific biological processes?
+5. What are the consistently upregulated genes (off-target)? Are they enriched in any specific biological processes?
+
+## Read data and add metadata
+
+```{r}
+library(data.table)
+library(Seurat)
+library(tidyverse)
+library(stringr)
+library(openxlsx)
+library(UpSetR)
+library(RColorBrewer)
+library(ggplot2)
+library(ggpubr)
+library(shades)
+
+mn10_org <- readRDS("~/inbox/MN10/mn10_org_human_chimp.rds")
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/umap_clusters.pdf", height = 3, width = 4)
+DimPlot(mn10_org, label = T, cols = shades::brightness(get_palette(palette = "Set3", k=12), shades::scalefac(0.95))) & theme_bw() & theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+dev.off()
+FeaturePlot(mn10_org, features = c("percent.mt"), cols = c("lightgrey","red")) # check mito
+FeaturePlot(mn10_org, features = c("nFeature_RNA"), cols = c("lightgrey","red")) # check mito
+FeaturePlot(mn10_org, features = c("nCount_RNA"), cols = c("lightgrey","red")) # check mito
+
+library(cluster)
+# use PCA embeddings
+pc.emb <- Embeddings(mn10_org, "pca")[,1:20]
+clus <- Idents(mn10_org)
+sil <- silhouette(as.numeric(clus), dist(pc.emb))
+plot(sil)            # check negative/low silhouette cells
+summary(sil[,3])    # silhouette width stats
+# cells with low/negative silhouette are ambiguous
+
+```
+
+
+```{r}
+samples_metadata <- fread("/Volumes/MyPassport/MN10/10X/samplesheet.tab", data.table = F)
+metadata <- FetchData(mn10_org, "orig.ident")
+metadata$barcode <- rownames(metadata)
+metadata <- merge(metadata, samples_metadata, by.y="sample", by.x="orig.ident")
+rownames(metadata) <- metadata$barcode
+mn10_org <- AddMetaData(mn10_org, metadata[,c("cellline", "species", "seqnum", "batch")], col.name = c("cellline", "species", "seqnum", "batch"))
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/clusters_species.pdf", height = 3, width = 6)
+DimPlot(mn10_org, split.by = "species", label = T, cols = shades::brightness(get_palette(palette = "Set3", k=12), shades::scalefac(0.95))) & theme_bw() & theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/clusters_cellline.pdf", height = 3, width = 12)
+DimPlot(mn10_org, split.by = "cellline", label = T, cols = shades::brightness(get_palette(palette = "Set3", k=12), shades::scalefac(0.95))) & theme_bw() & theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/clusters_sample.pdf", height = 3, width = 20)
+DimPlot(mn10_org, split.by = "orig.ident", label = T, cols = shades::brightness(get_palette(palette = "Set3", k=12), shades::scalefac(0.95))) & theme_bw() & theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/clusters_batch.pdf", height = 3, width = 6)
+DimPlot(mn10_org, split.by = "batch", label = T, cols = shades::brightness(get_palette(palette = "Set3", k=12), shades::scalefac(0.95))) & theme_bw() & theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank(), axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+dev.off()
+
+```
+
+
+```{r}
+# Number of counts per nuclei
+qc_metrics <- FetchData(mn10_org, c("nCount_RNA", "nFeature_RNA", "percent.mt", "orig.ident", "species", "seqnum", "cellline"))
+qc_metrics$species <- factor(qc_metrics$species, levels = c("rhesus", "chimp", "human"))
+qc_metrics$cellline <- factor(qc_metrics$cellline, levels = c("iRH23", "iRH34", "Sandra", "JoC", "hiPS10", "hiPS6"))
+qc_metrics$orig.ident <- factor(qc_metrics$orig.ident, unique(qc_metrics[order(qc_metrics$cellline), "orig.ident"]))
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/vln_nCount_nFeature_mtperc_sample_postQC_pretty.pdf", height = 7, width = 7)
+ggplot(qc_metrics, aes(x=orig.ident, y=nCount_RNA, fill = cellline)) + 
+  geom_jitter(width = 0.2, size=0.05, alpha=0.2) +
+  geom_violin(alpha = 0.7) +
+  theme_bw()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_fill_manual(values=c("iRH23" = "#9d9eed", 
+                                                                                                               "iRH34" = "#4a4c94", 
+                                                                                                               "Sandra" = "#84d9c1", 
+                                                                                                               "JoC" = "#3d7d6b", 
+                                                                                                               "hiPS10" = "#a6de81",
+                                                                                                               "hiPS6" = "#49702e")) +
+  labs(y="# Counts")
+
+ggplot(qc_metrics, aes(x=orig.ident, y=nFeature_RNA, fill = cellline)) + 
+  geom_jitter(width = 0.2, size=0.05, alpha=0.2) +
+  geom_violin(alpha = 0.7) +
+  theme_bw()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))  + scale_fill_manual(values=c("iRH23" = "#9d9eed", 
+                                                                                                               "iRH34" = "#4a4c94", 
+                                                                                                               "Sandra" = "#84d9c1", 
+                                                                                                               "JoC" = "#3d7d6b", 
+                                                                                                               "hiPS10" = "#a6de81",
+                                                                                                               "hiPS6" = "#49702e")) +
+  labs(y="# Genes detected")
+
+ggplot(qc_metrics, aes(x=orig.ident, y=percent.mt, fill = cellline)) + 
+  geom_jitter(width = 0.2, size=0.05, alpha=0.2) +
+  geom_violin(alpha = 0.7) +
+  theme_bw()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_fill_manual(values=c("iRH23" = "#9d9eed", 
+                                                                                                               "iRH34" = "#4a4c94", 
+                                                                                                               "Sandra" = "#84d9c1", 
+                                                                                                               "JoC" = "#3d7d6b", 
+                                                                                                               "hiPS10" = "#a6de81",
+                                                                                                               "hiPS6" = "#49702e")) +
+labs(y="Ratio of mt counts")
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/vln_nCount_nFeature_mtperc_sample_postQC.pdf", height = 12, width = 20)
+VlnPlot(mn10_org, c("nCount_RNA", "nFeature_RNA", "percent.mt"), group.by = "orig.ident", pt.size = 0.1) + theme(legend.position = "None")
+dev.off()
+
+quantile(qc_metrics$nFeature_RNA)
+
+```
+
+
+## Bio markers
+
+Sort nuclei based on expression
+```{r}
+library(dplyr)
+# Sorts nuclei based on expression so that we dont miss to see the expression by overlapping points
+featureplot_sort_points <- function(df, gene, split = NA){
+  df <- df %>% 
+    drop_na(gene)
+  minimum = min(df[,gene])
+  maximum = max(df[,gene])
+  
+  plt <- df %>%
+    arrange(get(gene)) %>%
+    ggplot(aes(x=umap_1, y=umap_2, color=get(gene))) + geom_point(size=0.3) + theme_bw() + 
+    scale_colour_gradient2(limits = c(minimum, maximum), high = "#1e386c", low = "#bfdbf0", mid = "#0394cb", midpoint = maximum/2) +
+    labs(color = gene) +
+    ggtitle(gene) +
+    theme(axis.line = element_line(colour = "lightgrey"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour = "lightgrey", fill=NA),
+          panel.background = element_blank(),
+          axis.title=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(),
+          plot.title = element_text(face = "bold"))
+  
+  if(!is.na(split)){
+    plt <- plt + facet_wrap(.~get(split), ncol=5)
+  }
+  return(plt)
+}
+
+featureplot_unsort_points <- function(df, gene, split = NA){
+  df <- df %>% 
+    drop_na(gene)
+  minimum = min(df[,gene])
+  maximum = max(df[,gene])
+  
+  plt <- df %>%
+    ggplot(aes(x=umap_1, y=umap_2, color=get(gene))) + geom_point(size=0.3, alpha=0.6) + theme_bw() + 
+    scale_colour_gradient2(limits = c(minimum, maximum), high = "#1e386c", low = "#bfdbf0", mid = "#0394cb", midpoint = maximum/2) +
+    labs(color = gene) +
+    ggtitle(gene) +
+    theme(axis.line = element_line(colour = "lightgrey"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour = "lightgrey", fill=NA),
+          panel.background = element_blank(),
+          axis.title=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(),
+          plot.title = element_text(face = "bold"))
+  
+  if(!is.na(split)){
+    plt <- plt + facet_wrap(.~get(split), ncol=5)
+  }
+  return(plt)
+}
+
+DefaultAssay(mn10_org) <- "RNA"
+
+# Build the dotplot 
+p <- DotPlot(mn10_org,
+             features = c("FOXG1","GLI3","PAX6","SOX2",
+                          "CUX2","MAP2","NCAM1","RBFOX3",
+                          "MKI67"),
+             dot.scale = 10, scale = TRUE)
+dat <- p$data
+# Replace Inf/NaN with finite numbers (e.g., max/min of non-infinite values)
+finite_max <- max(dat$avg.exp.scaled[is.finite(dat$avg.exp.scaled)], na.rm = TRUE)
+finite_min <- min(dat$avg.exp.scaled[is.finite(dat$avg.exp.scaled)], na.rm = TRUE)
+
+dat$avg.exp.scaled[!is.finite(dat$avg.exp.scaled)] <- 0   # or finite_max/finite_min if you prefer
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_markers_cluster_dotplot.pdf", width = 4, height = 5)
+# Replot with cleaned data
+ggplot(dat, aes(x = id, y = features.plot)) +
+  geom_point(aes(size = pct.exp, color = avg.exp.scaled)) +
+  scale_color_gradient(low = "lightgrey", high = "red") +
+  scale_size(range = c(0, 6)) + theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) + labs(y="", x="")
+dev.off()
+```
+
+
+```{r}
+clusters <- FetchData(mn10_org, c("seurat_clusters", "species", "cellline", "orig.ident"))
+clusters$barcode <- rownames(clusters)
+clusters$species_cluster <- paste(clusters$species, clusters$seurat_clusters, sep="_")
+clusters$cluster_species <- paste(clusters$seurat_clusters, clusters$species, sep="_")
+clusters$species_cellline <- paste(clusters$species, clusters$cellline, sep="_")
+mn10_org <- AddMetaData(mn10_org, clusters[,c("species_cluster", "species_cellline", "cluster_species")], col.name = c("species_cluster", "species_cellline", "cluster_species"))
+
+clusters$orig.ident <- factor(clusters$orig.ident, levels = unique(clusters[order(clusters$cellline),"orig.ident"]))
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/mn10_org_clusters_species_barplot.pdf", width = 7, height = 9)
+clusters %>% 
+  ggplot(aes(x=orig.ident, fill=seurat_clusters)) + geom_bar(stat="count", position="fill") + 
+  facet_wrap(.~species, scales="free_x") +
+  theme_bw()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/mn10_org_markers_species_dotplot.pdf", width = 7, height = 5)
+DotPlot(mn10_org, features = c("TJP1", "CUX2", "PAX6", "GLI3",  "SOX2", "TBR1", "RBFOX3", "NCAM1", "EOMES", "FOXG1", "EMX1"), group.by = "cluster_species") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+```
+
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+mn10_org <- CellCycleScoring(mn10_org, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+mn10_org$cell_cycle_score <- mn10_org$S.Score + mn10_org$G2M.Score
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/mn10_org_umap_cellcycle.pdf", height = 4, width = 5)
+FeaturePlot(mn10_org, c("cell_cycle_score"), min.cutoff = "q9") & theme_bw()
+dev.off()
+```
+
+```{r}
+mn10_org_join <- JoinLayers(mn10_org)
+deas_clusters <- FindAllMarkers(mn10_org_join, group.by = "seurat_clusters", logfc.threshold = 0, only.pos = FALSE)
+
+deas_clusters_split <- split(deas_clusters, f = deas_clusters$cluster)
+deas_clusters_split_top10 <- list()
+for(cluster in names(deas_clusters_split)) deas_clusters_split_top10[[cluster]] <- deas_clusters_split[[cluster]][head(order(deas_clusters_split[[cluster]]$avg_log2FC, -log10(deas_clusters_split[[cluster]]$p_val_adj), decreasing = T), 10),]
+
+top10_dea_genes <- deas_clusters[which(deas_clusters$gene %in% as.vector(sapply(deas_clusters_split_top10, `[[`, "gene"))), ]
+top10_dea_genes_heatmap <- dcast(top10_dea_genes, formula = gene~cluster, value.var = "avg_log2FC")
+top10_dea_genes_heatmap[is.na(top10_dea_genes_heatmap)] <- 0
+rownames(top10_dea_genes_heatmap) <- top10_dea_genes_heatmap$gene
+
+library(pheatmap)
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_clusters_top10_markers.pdf", width = 5, height = 10)
+pheatmap(top10_dea_genes_heatmap[,-1], cluster_rows = T, cluster_cols = F)
+dev.off()
+```
+
+
+## Add metadata 
+### Cell type
+### Batch
+### Condition
+### Cell line
+```{r}
+# 0 "NPC",
+# 1 "fbNPCs",
+# 2 "NPCs",
+# 3 "Early neurons",
+# 4 "Late NPC",
+# 5 "NPC",
+
+### ADD to metadata
+# clusters_per_cell <- FetchData(mn10_org, "seurat_clusters")
+# clusters_per_cell$barcode <- rownames(clusters_per_cell)
+# celltypes_per_cell <- merge(coldata_celltypes, clusters_per_cell, by.x="value", by.y="seurat_clusters")
+# colnames(celltypes_per_cell)[2] <- "celltype"
+# rownames(celltypes_per_cell) <- celltypes_per_cell$barcode
+# mn10_org <- AddMetaData(mn10_org, metadata = celltypes_per_cell[,c("celltype"), drop=F], col.name = "celltype")
+# 
+# cellline_per_cell <- FetchData(mn10_org, c("species", "cell_line", "celltype"))
+# cellline_per_cell$barcode <- rownames(cellline_per_cell)
+# cellline_per_cell$species_cell_line <- paste(cellline_per_cell$species, cellline_per_cell$cell_line, sep="_")
+# cellline_per_cell$species_celltype <- paste(cellline_per_cell$species, cellline_per_cell$celltype, sep="_")
+# cellline_per_cell$species_celltype <- ifelse(cellline_per_cell$species_celltype == "chimp_1_fbNPC",
+#                                              "chimp_1_NPC", cellline_per_cell$species_celltype)
+# cellline_per_cell$species_celltype <- ifelse(cellline_per_cell$species_celltype == "human_2_NPC",
+#                                              "human_2_fbNPC", cellline_per_cell$species_celltype)
+# mn10_org <- AddMetaData(mn10_org, metadata = cellline_per_cell[,c("species_cell_line", "species_celltype"), drop=F], col.name = c("species_cell_line", "species_celltype"))
+
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_celltypes_species_markers.pdf", width = 7, height = 6)
+DotPlot(mn10_org, features = c("TJP1", "CUX2", "PAX6", "GLI3",  "SOX2", "TBR1", "RBFOX3", "NCAM1", "EOMES", "FOXG1", "EMX1", "MKI67"), group.by = "species_celltype") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+color_clusters <- c("human_0" = "#85d6d1", 
+                     "human_2" = "#2c989e", 
+                     "human_1" = "#2c989e",
+                     "human_3" = "#e3a430",
+                     "human_5" = "#85d6d1",
+                     "human_4" = "#ea7603",
+                     "chimp_0" = "#85d6d1",
+                     "chimp_3" = "#e3a430",
+                     "chimp_1" = "#85d6d1",
+                     "chimp_2" = "#85d6d1", 
+                     "chimp_5" = "#85d6d1", 
+                     "chimp_4" = "#ea7603")
+
+species_clusters_df <- FetchData(mn10_org, c("seurat_clusters", "species", "orig.ident")) %>% 
+  mutate(species_clusters = paste0(species,"_", seurat_clusters))
+species_clusters_df$species_clusters <- factor(species_clusters_df$species_clusters, levels= c("human_0", "chimp_0", "human_5", "chimp_5","human_1", "chimp_1","human_2", "chimp_2",  "human_3", "chimp_3", "human_4", "chimp_4"))
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/mn10_org_bar_cluster_composition.pdf", height = 8)
+ggplot(species_clusters_df, aes(x=orig.ident, fill=species_clusters)) + 
+  geom_bar(stat="count", position="fill") + 
+  theme_bw() +
+  facet_wrap(.~species, scales = "free_x") + scale_fill_manual(values = color_clusters) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+```
+
+## Plot UMAP coloured by cell type
+```{r}
+unique(cellline_per_cell$species_celltype)
+color_celltypes <- c("human_0_NPC" = "#85d6d1", 
+                     "human_2_fbNPC" = "#2c989e", 
+                     "human_1_fbNPC" = "#2c989e",
+                     "human_3_EarlyNeurons" = "#e3a430",
+                     "human_5_NPC" = "#85d6d1",
+                     "human_4_LateNPC" = "#ea7603",
+                     "chimp_0_NPC" = "#85d6d1",
+                     "chimp_3_EarlyNeurons" = "#e3a430",
+                     "chimp_1_NPC" = "#85d6d1",
+                     "chimp_2_NPC" = "#85d6d1", 
+                     "chimp_5_NPC" = "#85d6d1", 
+                     "chimp_4_LateNPC" = "#ea7603")
+library(ggpubr)
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_umap_celltypes.pdf", width = 6, height = 4)
+DimPlot(mn10_org, group.by = "species_celltype") & theme_bw() & 
+    theme(axis.line = element_line(colour = "lightgrey"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour = "lightgrey", fill=NA),
+          panel.background = element_blank(),
+          axis.title=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(),
+          plot.title = element_text(face = "bold")) & scale_color_manual(values = color_celltypes)
+dev.off()
+
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_umap_celltypes_cellline.pdf", height = 3, width = 12)
+DimPlot(mn10_org, group.by = "celltype", split.by = "cellline") & theme_bw() & 
+    theme(axis.line = element_line(colour = "lightgrey"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour = "lightgrey", fill=NA),
+          panel.background = element_blank(),
+          axis.title=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(),
+          plot.title = element_text(face = "bold")) 
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_umap_celltypes_sample.pdf", height = 3, width = 20)
+DimPlot(mn10_org, group.by = "celltype", split.by = "orig.ident") & theme_bw() & 
+    theme(axis.line = element_line(colour = "lightgrey"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour = "lightgrey", fill=NA),
+          panel.background = element_blank(),
+          axis.title=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(),
+          plot.title = element_text(face = "bold")) 
+
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_umap_celltypes_batch.pdf", height = 3, width = 6)
+DimPlot(mn10_org, group.by = "celltype", split.by = "batch") & theme_bw() & 
+    theme(axis.line = element_line(colour = "lightgrey"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(colour = "lightgrey", fill=NA),
+          panel.background = element_blank(),
+          axis.title=element_blank(),
+          axis.text=element_blank(),
+          axis.ticks=element_blank(),
+          plot.title = element_text(face = "bold")) 
+dev.off()
+```
+
+
+## Cell type composition in each experiment
+```{r}
+nuclei_ratio <- FetchData(mn10_org, vars = c("species_celltype", "seurat_clusters","orig.ident", "species", "batch", "cellline", "orig.ident"))
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_celltype_cluster_composition_bars.pdf", height = 7)
+ggplot(nuclei_ratio, aes(x=species, fill=species_celltype)) + geom_bar(stat="count", position = "fill") + facet_wrap(cellline~batch, scales = "free_x", ncol=4) + theme_bw() + labs(x="Condition", y="Ratio of nuclei", fill = "Cell type")  + ggtitle("Cell type composition (split batches)")
+
+ggplot(nuclei_ratio, aes(x=species, fill=seurat_clusters)) + geom_bar(stat="count", position = "fill") + facet_wrap(cellline~batch, scales = "free_x", ncol=4) + theme_bw() + labs(x="Condition", y="Ratio of nuclei", fill = "Cluster") + scale_fill_manual(values = brewer.pal(n=8,"Set2"))  + ggtitle("Cluster composition (split batches)")
+ggplot(nuclei_ratio, aes(x=species, fill=seurat_clusters)) + geom_bar(stat="count", position = "dodge") + facet_wrap(cellline~batch, scales = "free_x", ncol=4) + theme_bw() + labs(x="Condition", y="Ratio of nuclei", fill = "Cluster") + scale_fill_manual(values = brewer.pal(n=8,"Set2"))  + ggtitle("Cluster composition (split batches)")
+dev.off()
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_celltype_cluster_composition_bars_sample.pdf", height = 7, width = 22)
+ggplot(nuclei_ratio, aes(x=species, fill=seurat_clusters)) + geom_bar(stat="count", position = "dodge") + facet_wrap(batch~orig.ident, scales = "free_x", ncol=4) + theme_bw() + labs(x="Condition", y="Ratio of nuclei", fill = "Cluster") + scale_fill_manual(values = brewer.pal(n=8,"Set2"))  + ggtitle("Cluster composition (split batches)")
+
+dev.off()
+```
+
+```{r}
+mn10_linc00662 <- FetchData(mn10_org, vars = c("umap_1", "umap_2", "LINC00662", "species"))
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_umap_linc00662.pdf", height = 3, width = 6)
+featureplot_sort_points(mn10_linc00662, gene = "LINC00662", split = "species")
+dev.off()
+
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/mn10_org_violin_linc00662.pdf", height = 3, width = 4)
+mn10_linc00662 %>% 
+  ggplot(aes(x=species, y=LINC00662)) + 
+  geom_jitter(height = 0, size=0.3, width = 0.2) +
+  geom_violin() + 
+  theme_bw()
+dev.off()
+```
+
+```{r}
+fetal <- readRDS("/Volumes/MyPassport/FetalCortex/30.03.22/3_combinedUMAP_perCluster/fetalcortex_merged_cluster.rds")
+fetal <- UpdateSeuratObject(fetal)
+DefaultAssay(fetal) <- "RNA"
+fetal_linc00662 <- FetchData(fetal, vars = c("UMAP_1", "UMAP_2", "LINC00662"))
+colnames(fetal_linc00662) <- c("umap_1", "umap_2", "LINC00662")
+pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/fetal_umap_linc00662.pdf", height = 3, width = 4)
+featureplot_sort_points(fetal_linc00662, gene = "LINC00662") 
+dev.off()
+```
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.features
+mn10_org <- CellCycleScoring(mn10_org, s.features = s.genes, g2m.features = g2m.genes, set.ident = F, assay="RNA")
+```
+
