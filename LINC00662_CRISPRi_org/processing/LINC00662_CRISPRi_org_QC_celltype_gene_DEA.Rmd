@@ -1,0 +1,754 @@
+---
+title: "MN06 LINC00662 KD"
+author: "Raquel Garza"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r class.source = 'fold-hide'}
+
+## getSignName ##
+# Get significantly different gene names. 
+# Taken from source code of the package deseqAbstraction which is no longer available on github.
+# Credits to Per L. Brattås
+# Parameters:
+# x = results object from deseq
+# p = padj threshold for significance
+# l = log2FC threshold for significance
+getSignName <- function(x,p,l=0) {
+  up <- x[!is.na(x$padj) & x$padj < p & x$log2FoldChange > l,]
+  down <- x[!is.na(x$padj) & x$padj < p & x$log2FoldChange < -l,]
+  return(list(up=rownames(up),down=rownames(down)))
+}
+## getAverage ##
+# Get average expression (normalized by median of ratios) of each of the conditions in a deseq object.
+# Taken from source code of the package deseqAbstraction which is no longer available on github.
+# Credits to Per L. Brattås
+# Parameters:
+# dds = deseq object
+getAverage <- function(dds) {
+  baseMeanPerLvl <- sapply( levels(dds$condition), function(lvl) rowMeans( counts(dds,normalized=TRUE)[,dds$condition == lvl] ) )
+  baseSDPerLvl <- sapply( levels(dds$condition), function(lvl) apply( counts(dds,normalized=TRUE)[,dds$condition == lvl],1,sd ) )
+  colnames(baseSDPerLvl) <- paste("st.dev:",colnames(baseSDPerLvl),sep="")
+  return(list(Mean=baseMeanPerLvl,SD=baseSDPerLvl))
+}
+
+meanPlot_cus <- function(exp,test,c1 = "condition 1",c2 = "condition 2",p=.05,l=0,id=F, ttl="", 
+                         repel=TRUE, col1="tomato", col2="darkturquoise", col3="grey", highlights=NA){
+  sign <- getSignName(x = test,p = p,l = l)
+  u <- sign$up
+  d <- sign$down
+  
+  #color up and down sign..
+  colVec <- ifelse(test = (rownames(exp) %in% u),
+                   yes = col1,
+                   no = ifelse(test = (rownames(exp) %in% d),
+                               yes = col2, no =col3))
+  colVec[is.na(colVec)] <- "steelblue" ## if NA make sure it's not counted as <p
+  #size of points
+  cexVec <- ifelse(test = (rownames(exp) %in% u),
+                   yes = 0.35,
+                   no = ifelse(test = (rownames(exp) %in% d),
+                               yes = 0.35, no = 0.3))
+  
+  exp_log <- as.data.frame(log2(exp[,c(c1, c2)] + 0.5))
+  exp_log$Name <- rownames(exp_log)
+  
+  exp_log$reg <- factor(ifelse(exp_log$Name %in% u, paste('upregulated in ', c1, ' (', length(u), ')', sep =''),
+                               ifelse(exp_log$Name %in% d, paste('downregulated in ', c1,' (', length(d), ')', sep =''), paste('not significant', ' (', (nrow(test) - length(u) - length(d)), ')', sep=''))))
+  
+  library(ggrepel)
+  if(repel == TRUE){
+    plt <- ggplot(exp_log, aes(x=get(c2), y=get(c1), label=Name, color=reg)) + geom_point(aes(size=cexVec), alpha=0.7)+ scale_color_manual(values=c(col2, col3, col1))+ scale_size_continuous(range=c(1,2), guide="none")+ geom_text_repel(data = subset(exp_log, Name %in% u | Name %in% d),direction    = "y", nudge_y = 0.4, nudge_x = -0.5)
+  }
+  else{
+    plt <- ggplot(exp_log, aes(x=get(c2), y=get(c1), color=reg)) + geom_point(aes(size=cexVec), alpha=0.7)+ scale_color_manual(values=c(col2, col3, col1))+ scale_size_continuous(range=c(1,2), guide="none")
+  }
+  plt <- plt + labs(x=paste("log2(mean ",c2,")",sep=""), 
+                    y=paste("log2(mean ",c1,")",sep=""),
+                    title=paste(ttl, paste(c1," vs. ",c2,sep=""), sep = ': '),
+                    subtitle=paste("p-adj < ",p,", log2(fc) > ",l,sep=""))+ theme_bw() +
+    theme( plot.title = element_text( size=14, face="bold"), text = element_text(size=15), panel.grid.minor = element_blank(), panel.grid.major = element_blank(), legend.title=element_blank()) 
+  
+  
+  if(id==T) {
+    
+    identify(log2(exp[,1]),log2(exp[,2]),labels = rownames(exp))
+    
+  }
+  
+  if(!is.na(highlights)){
+    plt <- plt + geom_point(data=exp_log[highlights,], aes(x=get(c2), y=get(c1)), colour="springgreen3", size=5, shape=1, stroke=2)
+  }
+  return(plt)
+  
+}
+
+
+inflection_point <- function(x, y){
+  # Order the data
+  df <- data.frame(x = x, y = y)
+  df <- df[order(df$x), ]
+  df <- df[which(!is.na(df$y)), ]
+  
+  # Normalize the data to [0,1]
+  x_norm <- (df$x - min(df$x, na.rm = T)) / (max(df$x, na.rm = T) - min(df$x, na.rm = T))
+  y_norm <- (df$y - min(df$y, na.rm = T)) / (max(df$y, na.rm = T) - min(df$y, na.rm = T))
+  
+  # Line from start to end
+  line <- cbind(x_norm, y_norm)
+  start <- c(x_norm[1], y_norm[1])
+  end <- c(x_norm[length(x_norm)], y_norm[length(y_norm)])
+  
+  # Compute distances from each point to the line
+  dist_to_line <- function(point, start, end) {
+    num <- abs((end[2] - start[2]) * point[1] - 
+                 (end[1] - start[1]) * point[2] + 
+                 end[1]*start[2] - end[2]*start[1])
+    denom <- sqrt((end[2] - start[2])^2 + (end[1] - start[1])^2)
+    num / denom
+  }
+  
+  distances <- apply(line, 1, dist_to_line, start = start, end = end)
+  
+  # Find index of max distance
+  elbow_idx <- which.max(distances)
+  inflection_point <- df$x[elbow_idx]
+  return(inflection_point)
+}
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(openxlsx)
+library(ggpmisc)
+library(data.table)
+library(stringr)
+library(DESeq2)
+library(pheatmap)
+
+gene_counts <- fread("/Volumes/MyPassport/MN06_PTERV/results/tables/MN06_raw_counts_sum_pseudobulk.csv", data.table=F)
+gene_counts$day <- str_split(gene_counts$sample_name, "_d") %>% 
+  sapply(tail, 1) %>% 
+  str_split("_") %>% 
+  sapply(head, 1)
+
+gene_counts$condition <- ifelse(grepl("LV3599", gene_counts$sample_name), "LacZ", 
+                                ifelse(grepl("LV3621", gene_counts$sample_name), "g1", 
+                                       ifelse(grepl("LV3622", gene_counts$sample_name), "g2", "other?")))
+
+gene_counts$batch <- str_split(gene_counts$sample_name, "_b") %>% 
+  sapply(tail, 1)
+
+gene_counts_list <- split(gene_counts, f=list(gene_counts$day, gene_counts$condition, gene_counts$leiden))
+samplesheet <- gene_counts[,c("sample_name", "leiden", "condition", "day", "batch")]
+col_order <- colnames(gene_counts_list$`15.g1.0`)
+
+gene_counts_comparisons_list <- list()
+for( cluster in unique(samplesheet$leiden)){
+  comparison <- paste0("day15_", cluster)
+  gene_counts_comparisons_list[[comparison]] <- rbind(gene_counts_list[[paste0("15.g1.", cluster)]][,col_order],
+                                                      gene_counts_list[[paste0("15.g2.", cluster)]][,col_order],
+                                                      gene_counts_list[[paste0("15.LacZ.", cluster)]][,col_order])
+  
+  comparison <- paste0("day30_", cluster)
+  gene_counts_comparisons_list[[comparison]] <- rbind(gene_counts_list[[paste0("30.g1.", cluster)]][,col_order],
+                                                      gene_counts_list[[paste0("30.g2.", cluster)]][,col_order],
+                                                      gene_counts_list[[paste0("30.LacZ.", cluster)]][,col_order])
+  
+}
+
+samplesheet_coldata <- unique(samplesheet[,c("sample_name", "condition", "day", "batch")])
+rownames(samplesheet_coldata) <- samplesheet_coldata$sample_name
+gene_dds_list <- list()
+gene_exp_list <- list()
+gene_res_list <- list()
+gene_res_list_df <- list()
+for( i in names(gene_counts_comparisons_list)){
+  gene_counts_comparisons_list[[i]] <- gene_counts_comparisons_list[[i]] %>%
+    pivot_longer(
+      cols = -c(sample_name, leiden, V1, day, batch, condition),  # gather all except grouping columns
+      names_to = "gene",
+      values_to = "expression"
+    ) %>%
+    dplyr::select(sample_name, gene, expression) %>%
+    pivot_wider(
+      names_from = sample_name,
+      values_from = expression
+    ) %>%
+    as.data.frame()
+  rownames(gene_counts_comparisons_list[[i]]) <- gene_counts_comparisons_list[[i]]$gene
+  samplesheet_tmp <- samplesheet_coldata %>% 
+    filter(sample_name %in% colnames(gene_counts_comparisons_list[[i]]))
+  gene_dds_list[[i]] <- DESeqDataSetFromMatrix(gene_counts_comparisons_list[[i]][,rownames(samplesheet_tmp)]+1, samplesheet_tmp, design =  ~ batch + condition)
+  gene_dds_list[[i]]$condition <- relevel(gene_dds_list[[i]]$condition, "LacZ")
+  gene_dds_list[[i]] <- DESeq(gene_dds_list[[i]])
+  gene_exp_list[[i]] <- getAverage(dds = gene_dds_list[[i]])
+  test <- resultsNames(gene_dds_list[[i]])[3]
+  print(test)
+  gene_res_list[[i]] <- lfcShrink(gene_dds_list[[i]], test)
+  gene_res_list_df[[i]] <- as.data.frame(gene_res_list[[i]])
+  gene_res_list_df[[i]]$gene_name <- rownames(gene_res_list_df[[i]])
+}
+
+write.xlsx(gene_res_list_df, "/Volumes/MyPassport/MN06_PTERV/results/tables/MN06_gene_DEA.xlsx")
+```
+
+```{r}
+set.seed(10)
+library(clusterProfiler)
+gse_dotplot <- function(df){
+  genelist <- df[which(!is.na(df$log2FoldChange)),c("log2FoldChange", "gene_name"), drop=F]
+  genelist <- genelist[order(genelist$log2FoldChange, decreasing = T),]
+
+  genelist_FC <- genelist$log2FoldChange
+  names(genelist_FC) <- genelist$gene_name
+  gse <- gseGO(geneList=genelist_FC,
+               ont ="ALL",
+               keyType = "SYMBOL",
+               minGSSize = 3,
+               maxGSSize = 800,
+               seed = T,
+               pvalueCutoff = 0.05,
+               verbose = TRUE,
+               OrgDb = org.Hs.eg.db,
+               pAdjustMethod = "BH")
+  return(gse)
+}
+
+gse_pretty_dotplot <- function(gse, topn = 10, terms = NA){
+  gse <- gse@result
+  gse <- gse[which(gse$ONTOLOGY == "BP"),]
+  if(nrow(gse) > 0){
+    gse$sign <- ifelse(gse$enrichmentScore > 0, "Activated", "Supressed")
+    gse$num_genes <- sapply(str_split(gse$core_enrichment, "/"), length)
+    gse$gene_ratio <- gse$num_genes / gse$setSize
+    gse$Description <- factor(gse$Description, levels = gse[order(gse$gene_ratio), "Description"])
+    
+    if(!all(is.na(terms))){
+      gse <- gse %>% 
+        drop_na() %>% 
+        filter(ID %in% terms)
+    }else{
+      if(!length(gse$p.adjust) > topn){
+        topn <- length(gse$p.adjust)
+      }
+      gse <- gse[order(gse$NES, -log10(gse$p.adjust), decreasing = T)[0:topn],]
+    }
+    gse %>% 
+      drop_na() %>% 
+      ggplot(aes(x=Description, y=gene_ratio, size = num_genes, fill = p.adjust)) + geom_point(shape=21, colour="lightgrey") + facet_wrap(.~sign) + coord_flip() + theme_pubr(legend = "right", border = T) + labs(x="", fill="Padj", y = "Gene ratio", size = "Num genes") + scale_fill_gradientn(colors = c("firebrick1", "gray94")) + scale_size_continuous(range = c(2,8)) + theme(axis.text.y = element_text(size=10), strip.text.x = element_text(size = 10),axis.text.x = element_text(size=10),legend.text = element_text(size=10),legend.title = element_text(size=10)) 
+  }else{
+    return(NA)
+  }
+}
+
+```
+
+```{r}
+gse_list <- list()
+gse_list_df <- list()
+gse_plot_list <- list()
+for(i in names(gene_res_list_df)){
+    print(i)
+    gse_list[[i]] <- gse_dotplot(df = gene_res_list_df[[i]])
+    gse_list_df[[i]] <- gse_list[[i]]@result
+    if(length(which(gse_list[[i]]@result$ONTOLOGY == "BP")) > 0){
+      print("True!")
+      gse_plot_list[[i]] <- gse_pretty_dotplot(gse = gse_list[[i]], topn = 30) + ggtitle(i)
+    }
+  if(length(gse_list_df[[i]]) > 0){
+  openxlsx::write.xlsx(gse_list_df[[i]], paste("/Volumes/MyPassport/MN06_PTERV/results/tables/gse_cluster", i, "_GSEA_snRNAseq_res.xlsx", sep="_"))
+  }
+}
+
+
+pdf("/Volumes/MyPassport/MN06_PTERV/plots/GSEA_clusters_pool_guides_day30.pdf", width = 10)
+gse_plot_list$day30_0
+gse_plot_list$day30_1
+gse_plot_list$day30_2
+gse_plot_list$day30_3
+gse_plot_list$day30_4
+gse_plot_list$day30_5
+gse_plot_list$day30_6
+dev.off()
+
+pdf("/Volumes/MyPassport/MN06_PTERV/plots/GSEA_clusters_pool_guides_day15.pdf", width = 10)
+# gse_plot_list$day15_0
+# gse_plot_list$day15_1
+# gse_plot_list$day15_2
+gse_plot_list$day15_3
+# gse_plot_list$day15_4
+# gse_plot_list$day15_5
+gse_plot_list$day15_6
+dev.off()
+```
+
+
+```{r}
+gse_list_df_day30_2_activated <- gse_list_df$day30_2 %>% 
+  filter(p.adjust < 0.05 & ONTOLOGY == "BP" & enrichmentScore > 0) 
+gse_list_df_day30_3_activated <- gse_list_df$day30_3 %>% 
+  filter(p.adjust < 0.05 & ONTOLOGY == "BP" & enrichmentScore > 0) 
+gse_list_df_day30_4_activated <- gse_list_df$day30_4 %>% 
+  filter(p.adjust < 0.05 & ONTOLOGY == "BP" & enrichmentScore > 0) 
+
+potential_relevant_genes <- intersect(intersect(unlist(str_split(gse_list_df_day30_2_activated$core_enrichment, "/")),
+unlist(str_split(gse_list_df_day30_3_activated$core_enrichment, "/"))),
+unlist(str_split(gse_list_df_day30_4_activated$core_enrichment, "/")))
+
+gene_list_df_day30_2_activated <- gene_res_list_df$day30_2[potential_relevant_genes,] %>% 
+  filter(log2FoldChange > 0.5)
+
+gene_list_df_day30_3_activated <- gene_res_list_df$day30_3[potential_relevant_genes,] %>% 
+  filter(log2FoldChange > 0.5)
+
+gene_list_df_day30_4_activated <- gene_res_list_df$day30_4[potential_relevant_genes,] %>% 
+  filter(log2FoldChange > 0.5)
+
+upreg_genes_counts <- fread("/Volumes/MyPassport/MN06_PTERV/results/tables/MN06_upreg_genes_GSEA_core.csv")
+colnames(upreg_genes_counts)[1] <- "Barcode"
+mn06_umap <- fread("/Volumes/MyPassport/MN06_PTERV/results/tables/counts_cellMeta_integrated_umap.csv", data.table=F)
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/col3a1_umap.pdf", height = 5)
+upreg_genes_counts %>% 
+  left_join(mn06_umap) %>% 
+  arrange(COL3A1) %>% 
+  ggplot(aes(x=UMAP1, y=UMAP2, color=COL3A1)) +
+  geom_point(size=0.3) + facet_wrap(day~condition)+ scale_color_continuous(high = "#034a01", low="#d6f5d5") + theme_bw()
+dev.off()
+
+```
+
+```{r}
+cluster_order_per_group_df <- function(df_mat, metadata, group_col = "condition", method = "euclidean", linkage = "ward.D2") {
+  # Check rownames
+  if (is.null(rownames(df_mat))) stop("Input data frame must have rownames (barcodes).")
+  if (is.null(rownames(metadata))) stop("Metadata must have rownames (barcodes).")
+  if (!(group_col %in% colnames(metadata))) stop(paste("Column", group_col, "not found in metadata."))
+
+  # Ensure only common barcodes are used
+  common_barcodes <- intersect(rownames(df_mat), rownames(metadata))
+  df_mat <- df_mat[common_barcodes, , drop = FALSE]
+  metadata <- metadata[common_barcodes, , drop = FALSE]
+
+  # Split matrix by condition
+  mat_split <- split(df_mat, metadata[[group_col]])
+
+  # Cluster and order within each group
+  ordered_barcodes <- map(mat_split, function(group_df) {
+    if (nrow(group_df) <= 2) {
+      return(rownames(group_df))  # No clustering if <=2 cells
+    }
+    d <- dist(group_df, method = method)
+    hc <- hclust(d, method = linkage)
+    rownames(group_df)[hc$order]
+  }) %>% unlist(use.names = FALSE)
+
+  return(ordered_barcodes)
+}
+
+
+```
+
+
+```{r}
+gse_list_df_day30_2_activated_axon <- gse_list_df_day30_2_activated[which(grepl("axon", gse_list_df_day30_2_activated$Description)), "core_enrichment"]
+gse_list_df_day30_3_activated_axon <- gse_list_df_day30_3_activated[which(grepl("axon", gse_list_df_day30_3_activated$Description)), "core_enrichment"]
+# gse_list_df_day30_4_activated[which(grepl("axon", gse_list_df_day30_4_activated$Description)),]
+
+axon_genes <- unique(c(unique(unlist(str_split(gse_list_df_day30_3_activated_axon, "/"))),
+                       unique(unlist(str_split(gse_list_df_day30_2_activated_axon, "/")))))
+
+axon_genes_counts <- fread("/Volumes/MyPassport/MN06_PTERV/results/tables/MN06_axon_genes_GSEA_core.csv", data.table = F)
+colnames(axon_genes_counts)[1] <- "Barcode"
+axon_genes_counts <- axon_genes_counts %>%
+                       left_join(mn06_umap)
+
+axon_genes_counts_mean <- axon_genes_counts %>%
+  select(-Barcode, -rep, -batch, -UMAP2, -UMAP1, -rep_num, -batch_num, -n_genes, -predicted_doublet, -doublet_score, -pct_counts_ribo, -total_counts_ribo,
+         -n_genes_by_counts, -pct_counts_mt, -total_counts_mt, -total_counts, -sample_name) %>%
+  group_by(condition, day, leiden) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+axon_genes_counts_mean <- as.data.frame(axon_genes_counts_mean)
+rownames(axon_genes_counts_mean) <- paste0(axon_genes_counts_mean$condition, "_", axon_genes_counts_mean$day, "_", axon_genes_counts_mean$leiden)
+axon_genes_counts_mean <- axon_genes_counts_mean[order(axon_genes_counts_mean$day, axon_genes_counts_mean$condition),]
+
+axon_genes_counts_mean_sample <- axon_genes_counts %>%
+  select(-Barcode, -rep, -batch, -UMAP2, -UMAP1, -rep_num, -batch_num, -n_genes, -predicted_doublet, -doublet_score, -pct_counts_ribo, -total_counts_ribo,
+         -n_genes_by_counts, -pct_counts_mt, -total_counts_mt, -total_counts) %>%
+  group_by(condition, day, leiden, sample_name) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+axon_genes_counts_mean_sample <- as.data.frame(axon_genes_counts_mean_sample)
+rownames(axon_genes_counts_mean_sample) <- paste0(axon_genes_counts_mean_sample$condition, "_", axon_genes_counts_mean_sample$day, "_", axon_genes_counts_mean_sample$sample_name, "_", axon_genes_counts_mean_sample$leiden)
+axon_genes_counts_mean_sample <- axon_genes_counts_mean_sample[order(axon_genes_counts_mean_sample$day, axon_genes_counts_mean_sample$condition),]
+
+axon_genes_day30_2 <- gene_res_list_df$day30_2 %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  filter(gene_name %in% axon_genes)
+
+axon_genes_day30_3 <- gene_res_list_df$day30_3 %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  filter(gene_name %in% axon_genes)
+
+axon_genes_signif <- unique(c(axon_genes_day30_2$gene_name, axon_genes_day30_3$gene_name))
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/heatmap_axon_mean_cluster_condition.pdf")
+pheatmap(t(axon_genes_counts_mean[which((endsWith(rownames(axon_genes_counts_mean), "2") | endsWith(rownames(axon_genes_counts_mean), "3") | endsWith(rownames(axon_genes_counts_mean), "4"))  | endsWith(rownames(axon_genes_counts_mean), "5") & grepl("_30_", rownames(axon_genes_counts_mean))), axon_genes_signif]), 
+         show_rownames = T, 
+         annotation_col = axon_genes_counts_mean[which((endsWith(rownames(axon_genes_counts_mean), "2") | endsWith(rownames(axon_genes_counts_mean), "3") | endsWith(rownames(axon_genes_counts_mean), "4")  | endsWith(rownames(axon_genes_counts_mean), "5"))),c(1,2,3)], 
+         cluster_cols = F, 
+         scale = "row")
+dev.off()
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/heatmap_axon_mean_cluster_condition_sample_day30.pdf", height = 12)
+tmp <- pheatmap(t(axon_genes_counts_mean_sample[which((endsWith(rownames(axon_genes_counts_mean_sample), "2") | endsWith(rownames(axon_genes_counts_mean_sample), "3") | endsWith(rownames(axon_genes_counts_mean_sample), "4")  ) & grepl("_30_", rownames(axon_genes_counts_mean_sample))), axon_genes_signif]), 
+         show_rownames = T, 
+         show_colnames = F, 
+         annotation_col = axon_genes_counts_mean_sample[which((endsWith(rownames(axon_genes_counts_mean_sample), "2") | endsWith(rownames(axon_genes_counts_mean_sample), "3") | endsWith(rownames(axon_genes_counts_mean_sample), "4"))),c(1,2,3)], 
+         cluster_cols = F, border_color = NA,
+         scale = "row", breaks = seq(-3,3,length.out=100))
+dev.off()
+
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/heatmap_axon_mean_cluster_condition_sample_day15.pdf", height = 12)
+pheatmap(t(axon_genes_counts_mean_sample[which((endsWith(rownames(axon_genes_counts_mean_sample), "0") | endsWith(rownames(axon_genes_counts_mean_sample), "1") | endsWith(rownames(axon_genes_counts_mean_sample), "3") ) & grepl("_15_", rownames(axon_genes_counts_mean_sample))), axon_genes_signif]), 
+         show_rownames = T, 
+         show_colnames = F, 
+         annotation_col = axon_genes_counts_mean_sample[which((endsWith(rownames(axon_genes_counts_mean_sample), "0") | endsWith(rownames(axon_genes_counts_mean_sample), "1") | endsWith(rownames(axon_genes_counts_mean_sample), "3") | endsWith(rownames(axon_genes_counts_mean_sample), "4"))),c(1,2,3)], 
+         cluster_cols = F, border_color = NA,
+         scale = "row", breaks = seq(-3,3,length.out=100))
+
+pheatmap(t(axon_genes_counts_mean_sample[which((endsWith(rownames(axon_genes_counts_mean_sample), "0") | endsWith(rownames(axon_genes_counts_mean_sample), "1") | endsWith(rownames(axon_genes_counts_mean_sample), "3") ) & grepl("_15_", rownames(axon_genes_counts_mean_sample))), tmp$tree_row$labels]), cluster_rows = F,
+         show_rownames = T, 
+         show_colnames = F, 
+         annotation_col = axon_genes_counts_mean_sample[which((endsWith(rownames(axon_genes_counts_mean_sample), "0") | endsWith(rownames(axon_genes_counts_mean_sample), "1") | endsWith(rownames(axon_genes_counts_mean_sample), "3") | endsWith(rownames(axon_genes_counts_mean_sample), "4"))),c(1,2,3)], 
+         cluster_cols = F, border_color = NA,
+         scale = "row", breaks = seq(-3,3,length.out=100))
+
+dev.off()
+
+
+```
+
+Some violin plots with examples
+```{r}
+View(gene_res_list_df$day30_2[axon_genes, ])
+tmp <- as.data.frame(gene_exp_list$day30_2$Mean)
+tmp$g1_LacZ_diff <- tmp$g1 - tmp$LacZ
+View(tmp[axon_genes,])
+
+gene_norm_list <- list()
+for(i in names(gene_dds_list)){
+  gene_norm_list[[i]] <- as.data.frame(t(counts(gene_dds_list[[i]], normalize=T)))
+  gene_norm_list[[i]] <- gene_norm_list[[i]] %>% 
+    rownames_to_column("sample_name") %>% 
+    left_join(unique(mn06_umap[,c("sample_name", "condition", "day")]))
+  gene_norm_list[[i]]$condition <- factor(gene_norm_list[[i]]$condition, levels = c("LacZ", "g1", "g2"))
+}
+
+# https://www.nature.com/articles/s21598-022-69912-2
+# https://www.frontiersin.org/journals/molecular-neuroscience/articles/10.2289/fnmol.2022.858582/full
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC11226122/
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC10762677/
+# https://www.frontiersin.org/journals/cell-and-developmental-biology/articles/10.2289/fcell.2022.1112675/full
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC7802022/
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC2772558/
+# https://www.nature.com/articles/s21267-022-26725-7
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC2810260/
+# https://www.nature.com/articles/6602222
+
+selected_genes_2 <- c("CDH4", "BMP7", "DSCAML1", "KALRN", "EPHB2", "SLIT3","SEMA5A","NOTCH1")
+day30_2_padj <- gene_res_list_df$day30_2[selected_genes_2, "padj", drop=F]
+day30_2_padj <- day30_2_padj %>% rownames_to_column("name")
+
+# https://pubmed.ncbi.nlm.nih.gov/38105965/
+# https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2024.1436312/full
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC3776557/
+# https://pubmed.ncbi.nlm.nih.gov/30114188/
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC6762399/
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC3678342/
+selected_genes_3 <- c("CDH4", "ABL1", "MARK2", "TTLL1", "MEGF8", "B4GALT5","TIAM1","NOTCH1")
+day30_3_padj <- gene_res_list_df$day30_3[selected_genes_3, "padj", drop=F]
+day30_3_padj <- day30_3_padj %>% rownames_to_column("name")
+
+day30_4_padj <- gene_res_list_df$day30_4[c(selected_genes_2, selected_genes_3), "padj", drop=F]
+day30_4_padj <- day30_4_padj %>% rownames_to_column("name")
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/bar_examples_axon_upreg_day30_pseudobulk.pdf", height = 7, width = 12)
+gene_norm_list$day30_2 %>% 
+  select(selected_genes_2, "sample_name", "condition", "day") %>% 
+  filter(day == "30") %>% 
+  pivot_longer(-c("sample_name", "condition", "day")) %>% 
+  left_join(day30_2_padj) %>% 
+  mutate(dup = duplicated(padj)) %>% 
+  mutate(padj = ifelse(!dup, format(padj, digits = 2, scientific = T), NA)) %>% 
+  group_by(name) %>% 
+  mutate(top_gene_value = max(value)) %>% 
+  ggplot(aes(x=condition, y=value, label=padj)) + 
+  geom_bar(stat='summary', fun="mean") +
+  geom_text(aes(x = 2, y = top_gene_value)) +
+  stat_summary(aes(group_by=condition), geom = "point", fun.y = "mean", col = "black")  +
+  stat_summary( fun.data = mean_se, geom = "errorbar", width=0.2) +
+  geom_jitter(width=0.2, size=0.2) +
+  theme_bw() + labs(y="Normalized Expression") + ggtitle("Day 30 cluster 2") + facet_wrap(.~name, scales = "free_y", ncol = 4)
+
+gene_norm_list$day30_3 %>% 
+  select(selected_genes_3, "sample_name", "condition", "day") %>% 
+  filter(day == "30") %>% 
+  pivot_longer(-c("sample_name", "condition", "day")) %>% 
+  left_join(day30_3_padj) %>% 
+  mutate(dup = duplicated(padj)) %>% 
+  mutate(padj = ifelse(!dup, format(padj, digits = 2, scientific = T), NA)) %>% 
+  group_by(name) %>% 
+  mutate(top_gene_value = max(value)) %>% 
+  ggplot(aes(x=condition, y=value, label=padj)) + 
+  geom_bar(stat='summary', fun="mean") +
+  geom_text(aes(x = 2, y = top_gene_value)) +
+  stat_summary(aes(group_by=condition), geom = "point", fun.y = "mean", col = "black")  +
+  stat_summary( fun.data = mean_se, geom = "errorbar", width=0.2) +
+  geom_jitter(width=0.2, size=0.2) +
+  theme_bw() + labs(y="Normalized Expression") + ggtitle("Day 30 cluster 3") + facet_wrap(.~name, scales = "free_y", ncol = 4)
+
+gene_norm_list$day30_4 %>% 
+  select(c(selected_genes_3, selected_genes_2), "sample_name", "condition", "day") %>% 
+  filter(day == "30") %>% 
+  pivot_longer(-c("sample_name", "condition", "day")) %>% 
+  left_join(day30_4_padj) %>% 
+  mutate(dup = duplicated(padj)) %>% 
+  mutate(padj = ifelse(!dup, format(padj, digits = 2, scientific = T), NA)) %>% 
+  group_by(name) %>% 
+  mutate(top_gene_value = max(value)) %>% 
+  ggplot(aes(x=condition, y=value, label=padj)) + 
+  geom_bar(stat='summary', fun="mean") +
+  geom_text(aes(x = 2, y = top_gene_value)) +
+  stat_summary(aes(group_by=condition), geom = "point", fun.y = "mean", col = "black")  +
+  stat_summary( fun.data = mean_se, geom = "errorbar", width=0.2) +
+  geom_jitter(width=0.2, size=0.2) +
+  theme_bw() + labs(y="Normalized Expression") + ggtitle("Day 30 cluster 4") + facet_wrap(.~name, scales = "free_y", ncol = 4)
+dev.off()
+
+```
+
+```{r}
+day15_1_padj <- gene_res_list_df$day15_1[c(selected_genes_2, selected_genes_3), "padj", drop=F]
+day15_1_padj <- day15_1_padj %>% rownames_to_column("name")
+
+# https://pubmed.ncbi.nlm.nih.gov/38105965/
+# https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2024.1436312/full
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC3776557/
+# https://pubmed.ncbi.nlm.nih.gov/30114188/
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC6762399/
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC3678342/
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/bar_examples_axon_upreg_day15_1_pseudobulk.pdf", height = 7, width = 8)
+gene_norm_list$day15_1 %>% 
+  select(c(selected_genes_2, selected_genes_3), "sample_name", "condition", "day") %>% 
+  filter(day == "15") %>% 
+  pivot_longer(-c("sample_name", "condition", "day")) %>% 
+  left_join(day15_1_padj) %>% 
+  mutate(dup = duplicated(padj)) %>% 
+  mutate(padj = ifelse(!dup, format(padj, digits = 2, scientific = T), NA)) %>% 
+  group_by(name) %>% 
+  mutate(top_gene_value = max(value)) %>% 
+  ggplot(aes(x=condition, y=value, label=padj)) + 
+  geom_bar(stat='summary', fun="mean") +
+  geom_text(aes(x = 2, y = top_gene_value)) +
+  stat_summary(aes(group_by=condition), geom = "point", fun.y = "mean", col = "black")  +
+  stat_summary( fun.data = mean_se, geom = "errorbar", width=0.2) +
+  geom_jitter(width=0.2, size=0.2) +
+  theme_bw() + labs(y="Normalized Expression") + ggtitle("Day 15 cluster 1") + facet_wrap(.~name, scales = "free_y", ncol = 4)
+
+dev.off()
+```
+
+
+```{r}
+gene_counts <- gene_counts %>%
+    pivot_longer(
+      cols = -c(sample_name, leiden, V1, day, batch, condition),  # gather all except grouping columns
+      names_to = "gene",
+      values_to = "expression"
+    ) %>%
+  mutate(sample_cluster = paste0(sample_name, "_", leiden)) %>% 
+    select(sample_cluster, gene, expression) %>%
+    pivot_wider(
+      names_from = sample_cluster,
+      values_from = expression
+    ) %>%
+    as.data.frame()
+rownames(gene_counts) <- gene_counts$gene
+
+gene_counts
+```
+
+
+```{r}
+mn06_qc <- fread("/Volumes/MyPassport/MN06_PTERV/results/tables/MN06_QC.csv", data.table=F)
+colnames(mn06_qc)[1] <- "Barcodes"
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/linc00662_umap.pdf", height = 5)
+mn06_qc %>% 
+  left_join(mn06_umap) %>% 
+  arrange(LINC00662) %>% 
+  ggplot(aes(x=UMAP1, y=UMAP2, color=LINC00662)) + 
+  geom_point(size = 0.1) + 
+  theme_bw() +
+  facet_wrap(day~condition) + scale_color_continuous(high = "#034a01", low="#d6f5d5") + ggtitle("LINC00662")
+dev.off()
+
+
+cluster_colors = c("0" = "#8ed1c6",
+                   "1" = "#eec819",
+                   "2" = "#bebada",
+                   "3" = "#f48073",
+                   "4" = "#80b2d3",
+                   "5" = "#fbb363",
+                   "6" = "#b4d66c",
+                   "7" = "#f9cde1",
+                   "8" = "#d9d9d8")
+
+celltype_colors = c("15_0" = "#85d6d1",
+                   "15_1" = "#e3a430",
+                   "15_2" = "#e3a430",
+                   "15_3" = "#ea7603",
+                   "15_4" = "#e3a430",
+                   "15_5" = "#e3a430",
+                   "15_6" = "#e3a430",
+                   "30_0" = "#85d6d1",
+                   "30_1" = "#e3a430",
+                   "30_2" = "#e3a430",
+                   "30_3" = "#ea7603",
+                   "30_4" = "#e3a430",
+                   "30_5" = "#e3a430",
+                   "30_6" = "#ea7603")
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/clusters_umap_split.pdf", height = 5)
+mn06_qc %>% 
+  left_join(mn06_umap) %>% 
+  ggplot(aes(x=UMAP1, y=UMAP2, color=as.character(leiden))) + 
+  geom_point(size = 0.1) + 
+  theme_bw() +
+  facet_wrap(day~condition) + ggtitle("Clustering") +
+  scale_color_manual(values= cluster_colors) 
+dev.off()
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/clusters_umap.pdf", height = 4, width = 6)
+mn06_qc %>% 
+  left_join(mn06_umap) %>% 
+  ggplot(aes(x=UMAP1, y=UMAP2, color=as.character(leiden))) + 
+  geom_point(size = 0.1) + 
+  theme_bw() +
+  ggtitle("Clustering") +
+  scale_color_manual(values= cluster_colors) 
+
+mn06_qc %>% 
+  left_join(mn06_umap) %>% 
+  mutate(day_cluster = paste0(day, "_", leiden)) %>% 
+  ggplot(aes(x=UMAP1, y=UMAP2, color=as.character(day_cluster))) + 
+  geom_point(size = 0.1) + 
+  theme_bw() +
+  ggtitle("Clustering") +
+  scale_color_manual(values= celltype_colors) 
+dev.off()
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/clusters_bar.pdf", height = 16, width = 6)
+mn06_qc %>% 
+left_join(mn06_umap) %>% 
+  ggplot(aes(x=sample_name, fill=as.character(leiden))) + 
+  geom_bar(stat="count", position="fill") + 
+  facet_wrap(day~condition, scales = "free_x") + theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_fill_manual(values= cluster_colors) 
+dev.off()
+```
+
+```{r}
+load("/Volumes/MyPassport/MN06_PTERV/src/r_scripts/MN06_cluster_geneDEA.RData")
+
+```
+
+
+```{r}
+gene_counts_comparisons_list <- list()
+for( cluster in unique(samplesheet$leiden)){
+    comparison <- paste0("day15_g1_", cluster)
+    gene_counts_comparisons_list[[comparison]] <- rbind(gene_counts_list[[paste0("15.g1.", cluster)]][,col_order],
+                                                        gene_counts_list[[paste0("15.LacZ.", cluster)]][,col_order])
+    
+    comparison <- paste0("day15_g2_", cluster)
+    gene_counts_comparisons_list[[comparison]] <- rbind(gene_counts_list[[paste0("15.g2.", cluster)]][,col_order],
+                                                        gene_counts_list[[paste0("15.LacZ.", cluster)]][,col_order])
+    
+    comparison <- paste0("day30_g1_", cluster)
+    gene_counts_comparisons_list[[comparison]] <- rbind(gene_counts_list[[paste0("30.g1.", cluster)]][,col_order],
+                                                        gene_counts_list[[paste0("30.LacZ.", cluster)]][,col_order])
+    
+    comparison <- paste0("day30_g2_", cluster)
+    gene_counts_comparisons_list[[comparison]] <- rbind(gene_counts_list[[paste0("30.g2.", cluster)]][,col_order],
+                                                        gene_counts_list[[paste0("30.LacZ.", cluster)]][,col_order])
+}
+
+gene_dds_guide_list <- list()
+gene_exp_guide_list <- list()
+gene_res_guide_list <- list()
+gene_res_guide_list_df <- list()
+for( i in names(gene_counts_comparisons_list)){
+  gene_counts_comparisons_list[[i]] <- gene_counts_comparisons_list[[i]] %>%
+    pivot_longer(
+      cols = -c(sample_name, leiden, V1, day, batch, condition),  # gather all except grouping columns
+      names_to = "gene",
+      values_to = "expression"
+    ) %>%
+    dplyr::select(sample_name, gene, expression) %>%
+    pivot_wider(
+      names_from = sample_name,
+      values_from = expression
+    ) %>%
+    as.data.frame()
+  rownames(gene_counts_comparisons_list[[i]]) <- gene_counts_comparisons_list[[i]]$gene
+  samplesheet_tmp <- samplesheet_coldata %>% 
+    filter(sample_name %in% colnames(gene_counts_comparisons_list[[i]]))
+  gene_dds_guide_list[[i]] <- DESeqDataSetFromMatrix(gene_counts_comparisons_list[[i]][,rownames(samplesheet_tmp)]+1, samplesheet_tmp, design =  ~ batch + condition)
+  gene_dds_guide_list[[i]]$condition <- relevel(gene_dds_guide_list[[i]]$condition, "LacZ")
+  gene_dds_guide_list[[i]] <- DESeq(gene_dds_guide_list[[i]])
+  gene_exp_guide_list[[i]] <- getAverage(dds = gene_dds_guide_list[[i]])
+  test <- resultsNames(gene_dds_guide_list[[i]])[3]
+  print(test)
+  gene_res_guide_list[[i]] <- lfcShrink(gene_dds_guide_list[[i]], test)
+  gene_res_guide_list_df[[i]] <- as.data.frame(gene_res_guide_list[[i]])
+  gene_res_guide_list_df[[i]]$gene_name <- rownames(gene_res_guide_list_df[[i]])
+}
+
+```
+
+
+```{r}
+for( i in names(gene_res_list_df)) gene_res_list_df[[i]]$day_cluster <- i
+
+gene_res_list_df_bind <- do.call(rbind, gene_res_list_df)
+
+pdf("/Volumes/MyPassport/MN06_PTERV/results/plots/scatter_log2FC_cluster_geneDEA.pdf", height = 4, width = 4)
+gene_res_list_df_bind %>% 
+  drop_na() %>% 
+  mutate(sig = padj < 0.05) %>% 
+  filter(gene_name != "LINC00662") %>% 
+  filter(!day_cluster %in% c("day15_2", "day15_4", "day30_0", "day30_1")) %>% 
+  ggplot(aes(x=day_cluster, y=log2FoldChange)) + 
+  geom_jitter(aes(color = ifelse(sig, padj, NA)), size= 0.1) + theme_bw() + 
+  scale_color_gradient(low = "#d22128", high = "#efcda0", na.value = "darkgrey", limits = c(0, 0.05)) + 
+  labs(color = "Padj", x = "Day | Cluster") + 
+  geom_point(data = subset(gene_res_list_df_bind, gene_name == "LINC00662" & !(gene_res_list_df_bind$day_cluster %in% c("day15_2", "day15_4", "day30_0", "day30_1"))),
+             color = "#7bbb81", size = 2)+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+dev.off()
+```
+
