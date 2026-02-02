@@ -1,0 +1,121 @@
+# -*- coding: utf-8 -*-
+
+# lunarc configuration file
+import os
+
+WD =  "/scale/gr01/shared/jjakobsson/backup/MN10/"
+configfile: "/scale/gr01/shared/jjakobsson/backup/MN10/src/config_files/config.json"
+
+SAMPLES = config["samples"]
+geneGTF = "/scale/gr01/shared/jjakobsson/backup/raquelgg_fs3_jakobssonlab/annotations/hg38/gencode/v38/gencode.v38.annotation.gtf"
+exonGTF = "/scale/gr01/shared/jjakobsson/backup/raquelgg_fs3_jakobssonlab/annotations/hg38/gencode/v38/gencode.v38.basic.annotation.gtf"
+starIndex = "/scale/gr01/shared/jjakobsson/backup/raquelgg_fs5_jakobssonlab/GRCh38.p13_gencode.v38_STAR"
+teGTF = "/scale/gr01/shared/jjakobsson/backup/raquelgg_fs3_jakobssonlab/annotations/hg38/rmsk/hg38_rmsk_TEtranscripts.gtf"
+
+# Run as:
+# snakemake -j 5 --cluster-config /scale/gr01/shared/jjakobsson/backup/MN10/src/config_files/lunarc_config.json --cluster "sbatch -A {cluster.account} -p {cluster.partition} --tasks-per-node {cluster.tasks-per-node}  -t {cluster.time} -o {cluster.output} -e {cluster.error} -J {cluster.job-name} -N {cluster.nodes}" --latency-wait 60
+
+rule all:
+    input:
+       expand(os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bw"), sample=SAMPLES),
+       expand(os.path.join(WD, "gene_counts/unique/{sample}_gene_count_matrix_2.csv"), sample = SAMPLES)
+        
+
+rule uniquemapping:
+    input:
+        lambda wildcards: f"{config['samples'][wildcards.sample]}_R1.fastq.gz",
+        lambda wildcards: f"{config['samples'][wildcards.sample]}_R2.fastq.gz",
+        starIndex,
+        geneGTF
+    params:
+        prefix = os.path.join(WD, "map/unique/{sample}/{sample}_")
+    output:
+        os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam")
+    shell:
+        """
+        module purge
+        ml GCC/10.2.0 STAR/2.7.8a
+
+        STAR --runThreadN 10 \
+        --readFilesCommand gunzip -c \
+        --outSAMattributes All \
+        --outSAMtype BAM SortedByCoordinate \
+        --genomeDir {input[2]} \
+        --sjdbGTFfile {input[3]} \
+        --outFileNamePrefix {params.prefix} \
+        --outFilterMultimapNmax 1 \
+        --outFilterMismatchNoverLmax 0.03  \
+        --readFilesIn  {input[0]} {input[1]}
+
+        module purge
+        """
+
+rule indexing:
+    input:
+        os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam")
+    output:
+        os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai")
+    shell:
+        """
+        module purge
+        ml GCC/11.3.0 SAMtools/1.16.1
+        
+        samtools index -b {input}
+
+        module purge
+        """
+
+rule bigwig:
+    input:
+        os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam"),
+        os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai")
+    output:
+        os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bw"),
+        #os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.forward.out.bw"),
+        #os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.reverse.out.bw")
+    shell:
+        """
+        module purge
+        ml GCC/10.2.0  OpenMPI/4.0.5 deepTools/2.5.4
+        
+        bamCoverage --normalizeUsingRPKM -b {input[0]} -o {output[0]}
+        bamCoverage --normalizeUsingRPKM --filterRNAstrand forward -b {input[0]} -o {output[1]}
+        bamCoverage --normalizeUsingRPKM --filterRNAstrand reverse -b {input[0]} -o {output[2]}
+
+        module purge
+        """
+        
+
+rule gene_quantification:
+    input:
+        annotation = geneGTF,
+        sample = os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam")
+    output:
+        os.path.join(WD, "gene_counts/unique/{sample}_gene_count_matrix_2.csv")
+    shell:
+        """
+        module purge
+
+        module load subread/1.6.3-virt
+        subread-parse.sh featureCounts -p -F GTF -g gene_name -s 2 -a {input.annotation} -o {output} {input.sample}
+
+        module purge
+        """
+
+rule TE_quantification:
+    input:
+        TEgtf = teGTF,
+        sample = os.path.join(WD, "map/unique/{sample}/{sample}_Aligned.sortedByCoord.out.bam")
+    output:
+        os.path.join(WD, "TEcounts/unique/{sample}_TE_count_matrix_2.csv")
+    shell:
+        """
+        module purge
+
+        module load subread/1.6.3-virt
+        subread-parse.sh featureCounts -p -s 2 -F GTF -g transcript_id -a {input.TEgtf} -o {output} {input.sample}
+
+        module purge
+        """
+
+
