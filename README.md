@@ -37,7 +37,7 @@ Most code uses:
 
 ## Citation
 Please cite the corresponding publication when using this repository.
-[link to the biorxiv and publication at some point]
+https://www.biorxiv.org/content/10.64898/2025.12.12.693858v1.full
 
 ---
 
