@@ -234,7 +234,7 @@ DotPlot(mn10_org, features = c("TJP1", "CUX2", "PAX6", "GLI3",  "SOX2", "TBR1", 
 dev.off()
 ```
 
-
+## Cell cycle scores
 ```{r}
 s.genes <- cc.genes$s.genes
 g2m.genes <- cc.genes$g2m.genes
@@ -246,6 +246,21 @@ FeaturePlot(mn10_org, c("cell_cycle_score"), min.cutoff = "q9") & theme_bw()
 dev.off()
 ```
 
+## Write clean data
+A table containing per-cell information:
+- UMAP coordinates
+- Cluster assignment
+- Species
+- Cell line
+- LINC00662 expression
+- Cell cycle scores (S.score and G2M.score)
+```{r}
+clean_data <- merge(as.data.frame(mn10_org[["umap"]]@cell.embeddings), FetchData(mn10_org, c("orig.ident", "seurat_clusters","species","cellline","G2M.Score", "S.Score", "LINC00662")), by="row.names")
+colnames(clean_data)[1] <- "barcode"
+write.table(clean_data, "/Volumes/MyPassport/MN06_PTERV/repo/human_chimp_org/clean_data/human_chimp_org_barcodes_cluster_species_cellline_cellcycle_LINC00662.csv", quote = F, row.names = F, col.names = T, sep=",")
+```
+
+## Gene DEA
 ```{r}
 mn10_org_join <- JoinLayers(mn10_org)
 deas_clusters <- FindAllMarkers(mn10_org_join, group.by = "seurat_clusters", logfc.threshold = 0, only.pos = FALSE)
@@ -416,6 +431,7 @@ ggplot(nuclei_ratio, aes(x=species, fill=seurat_clusters)) + geom_bar(stat="coun
 dev.off()
 ```
 
+## LINC00662 expression
 ```{r}
 mn10_linc00662 <- FetchData(mn10_org, vars = c("umap_1", "umap_2", "LINC00662", "species"))
 
@@ -432,6 +448,9 @@ mn10_linc00662 %>%
 dev.off()
 ```
 
+## LINC00662 expression in fetal samples 
+
+Published data (Garza, et al., 2023; Sci Adv)
 ```{r}
 fetal <- readRDS("/Volumes/MyPassport/FetalCortex/30.03.22/3_combinedUMAP_perCluster/fetalcortex_merged_cluster.rds")
 fetal <- UpdateSeuratObject(fetal)
@@ -442,10 +461,3 @@ pdf("/Volumes/MyPassport/MN10/10X/results/plots/human_chimp/fetal_umap_linc00662
 featureplot_sort_points(fetal_linc00662, gene = "LINC00662") 
 dev.off()
 ```
-
-```{r}
-s.genes <- cc.genes$s.genes
-g2m.genes <- cc.genes$g2m.features
-mn10_org <- CellCycleScoring(mn10_org, s.features = s.genes, g2m.features = g2m.genes, set.ident = F, assay="RNA")
-```
-
