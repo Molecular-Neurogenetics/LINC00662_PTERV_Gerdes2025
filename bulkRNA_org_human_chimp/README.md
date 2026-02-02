@@ -1,36 +1,25 @@
-# Single-nuclei RNA-seq of Human and Chimpanzee Organoids
+# Bulk RNA-seq of Human and Chimpanzee Organoids
 
-Contains code and processed metadata used to generate species-specific transcriptomic profiles across human and chimpanzee organoids.
+This directory contains workflows and results for bulk RNA-seq comparing human and chimpanzee cerebral organoids.
 
 ## Contents
 
 ### **Code**
-- **Python script (trusTEr)**  
-  Generates UMAP embedding using Seurat.
+- **Snakefile**  
+  Workflow for:
+  - Mapping reads to species-specific reference genomes  
+  - Gene-level quantification  
 - **R Markdown**  
-  Downstream analyses including:  
-  - UMAP split by cluster  
-  - Cluster composition barplots  
-  - Marker gene expression  
-  - LINC00662 expression visualization  
-  - Cell cycle scoring
+  Performs:  
+  - Differential expression analysis (DEA)  
+  - Visualization (volcano plots, heatmaps, PCA, etc.)
 
 ### **Clean Data**
-A table containing per-cell information:  
-- UMAP coordinates  
-- Cluster assignment  
-- Species  
-- Cell line  
-- LINC00662 expression  
-- Cell cycle scores  
+- **Gene count matrix**  
+  Post-mapping counts used for differential expression.  
+- **Gene DEA results**  
+  Processed differential expression results used in the publication.
 
 ---
 
-## Workflow Overview
-1. Generate UMAP embedding using trusTEr (Python, Seurat under the hood).  
-2. Load results in R for cluster annotation, visualization, and quantitative comparisons.
 
----
-
-## Output
-Figures and tables used in the manuscript.
