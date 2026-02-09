@@ -1,0 +1,136 @@
+---
+title: "Analysis of LINC00662-ChopMS data"
+Associated article: "Retroviral insertions contributed to the divergence of human and chimpanzee brains"
+author:
+  - name: Chandramouli Muralidharan
+    affiliation: Molecular Neurogenetics Laboratory, Department of Experimental Medical Sciences, Lund University, Lund, Sweden
+    email: chandramouli.muralidharan@med.lu.se
+date: 2026-02-04
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+# Initial Setup
+## Enter the absolute path of (including) the LINC00662_chopMS folder within the quotes below
+```{r}
+HOME <- ""
+```
+
+## Load the required libraries
+```{r}
+# Important: Install the following packages if not already done, prior to loading
+suppressMessages({
+  library(tidyverse)
+  library(data.table)
+  library(AnnotationHub, verbose = F)
+  library(AnnotationDbi, verbose = F)
+  library(org.Hs.eg.db, verbose = F)
+  library(ComplexHeatmap, verbose = F)
+})
+```
+
+## Running the required scripts
+```{r}
+# Script to setup paths
+source(paste(dir_list$scripts, "01_setup.R", sep = "/"))
+
+# Script to process the pre-processed chopMS data for figures
+# The processed include: Background correction, QC, Normalization, Averaging across replicates, Shortlisting top candidates and Subcellular Annotation
+source(paste(dir_list$scripts, "02_LINC00662_chopMS_QC_norm_annot.R", sep = "/"))
+```
+
+# Figures
+## Fig 3G - Heatmap of shortlisted binding proteins (Top 45) showing normalised abundance per replicate and the subcellular location
+```{r}
+plot_name <- "Fig_3G_ChopMS_Heatmap_Top_45_Proteins"
+plot_height <- 3
+plot_width <- 10
+
+heatmap_data <- linc_chopMS_avg_top45_ann %>%
+  column_to_rownames("Gene_Name") %>% 
+  arrange(desc(Rep_linc00662_avg)) %>% 
+  select(Rep1_linc00662_Norm,
+         Rep2_linc00662_Norm)
+
+annotation_col <- linc_chopMS_avg_top45_ann %>% 
+  select(Gene_Name, Location) %>% 
+  arrange(match(Gene_Name, row.names(heatmap_data))) %>% 
+  column_to_rownames("Gene_Name")
+
+annotation_colors <- list(Location = c(Cytoplasm = "#1B9E77", Nucleus = "#D95F02"))
+
+bottom_annotation <- ComplexHeatmap::HeatmapAnnotation(df = annotation_col,
+                                                       col = annotation_colors, 
+                                                       annotation_name_side = "left",
+                                                       gp = grid::gpar(col = "white"))
+
+heatmap_legend_param = list(title = "Expression Level", labels_rot = 45, direction = "horizontal")
+
+set.seed(12345)
+
+heatmap <- ComplexHeatmap::pheatmap(t(heatmap_data),
+                         bottom_annotation = bottom_annotation,
+                         cluster_rows = FALSE, 
+                         cluster_cols = FALSE, 
+                         column_names_side = "top", 
+                         angle_col = "45",
+                         row_names_side = "left",
+                         cellwidth = 12,
+                         cellheight = 10,
+                         heatmap_legend_param = heatmap_legend_param)
+
+pdf(file = paste(dir_list$plots,
+                     paste(plot_name,
+                           "pdf",
+                           sep = "."),
+                     sep = "/"),
+    bg = "white",
+    height = plot_height,
+    width = plot_width,
+    author = "Chandramouli Muralidharan")
+
+ComplexHeatmap::draw(heatmap, 
+                     heatmap_legend_side = "bottom",
+                     annotation_legend_side = "bottom")
+
+dev.off()
+```
+
+## Fig 3H - Bar Plot of top GO terms (biological processes) enriched for the shortlisted binding proteins
+```{r}
+plot_name <- "Fig_3H_ChopMS_Top_45_StringDb_GO_Plot"
+plot_height <- 7
+plot_width <- 9
+
+# The data mentioned below was saved from StringDb portal v11.5. The accession IDs of the top 45 candidates were uploaded, and the accession IDs of all the proteins filtered post QC was used as background. Specifically, the biological processes enriched were downloaded.
+doc_dir <- paste(dir_list$data, "linc00662_chopMS_top45_candidates_StringDbv11.5.tsv", sep = "/")
+
+stringdb_go_results <- data.table::fread(file = doc_dir, sep = "\t", header = TRUE, strip.white = TRUE, data.table = FALSE)
+
+stringdb_go_results %>% 
+  select("term description", "strength", "false discovery rate") %>% 
+  top_n(10, strength) %>% 
+  ggplot(aes(x=`strength`, y=reorder(`term description`, `strength`), fill=`false discovery rate`)) + 
+  geom_col() +
+  theme_classic() +
+  labs(x = "Strength",
+       y = "GO Terms",
+       fill = "Adj p-value")
+
+ggsave(filename = paste(dir_list$plots,
+                        paste(plot_name,
+                              "pdf",
+                              sep = "."),
+                        sep = "/"),
+       device = "pdf",
+       height = plot_height,
+       width = plot_width,
+       limitsize = F)
+```
+
+
+
+
+

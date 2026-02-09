@@ -23,7 +23,7 @@ Oxford Nanopore in vitro sequencing analyses, including methylation and locus-sp
 ONT whole genome and direct RNA sequencing from fetal forebrain samples.
 
 ### `LINC00662_chopMS/`
-To be defined.
+ChopMS analysis of LINC00662 in fbNPCs, to identify its binding proteins.
 
 ---
 
