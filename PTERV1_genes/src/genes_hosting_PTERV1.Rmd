@@ -1,0 +1,85 @@
+---
+title: "PTERV1 genes"
+output:
+  html_document:
+    df_print: paged
+---
+
+Finding genes that host a PTERV1 insertion in pantro6
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+path <- "/Volumes/MyPassport/MN06_PTERV/repo/PTERV1_genes/clean_data/"
+```
+
+## These are the genes that need to be renamed
+
+```{r}
+renamed_genes <- fread(paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_renamed_genes.bed"), data.table = F)
+renamed_genes_lift_hg38 <- fread(paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_renamed_genes_lift_hg38.bed"), data.table = F)
+
+# Joining column (coords:name)
+renamed_genes$gene_coord_id_pantro <- paste0(renamed_genes$chr_pantro, ":", (renamed_genes$start_pantro +1), "-", renamed_genes$end_pantro, ":", renamed_genes$gene_name)
+
+colnames(renamed_genes_lift_hg38) <- c("chr_hg38", "start_hg38", "end_hg38", "gene_coord_id_pantro", "dot", "strand_hg38")
+
+renamed_genes <- renamed_genes %>% 
+  left_join(renamed_genes_lift_hg38)
+
+write.table(renamed_genes, paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_renamed_genes_lift_hg38_merged.bed"), sep="\t", quote = F, row.names = F, col.names = T)
+renamed_genes
+```
+
+## These are the genes that already had a name 
+
+```{r}
+translated_genes <- fread(paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_translated_genes.bed"), data.table = F)
+translated_genes_lift_hg38 <- fread(paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_translated_genes_lift_hg38.bed"), data.table = F)
+
+# Joining column (coords:name)
+translated_genes$gene_coord_id_pantro <- paste0(translated_genes$chr_pantro, ":", (translated_genes$start_pantro +1), "-", translated_genes$end_pantro, ":", translated_genes$gene_name)
+
+colnames(translated_genes_lift_hg38) <- c("chr_hg38", "start_hg38", "end_hg38", "gene_coord_id_pantro", "dot", "strand_hg38")
+
+translated_genes <- translated_genes %>% 
+  left_join(translated_genes_lift_hg38)
+
+write.table(translated_genes, paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_translated_genes_lift_hg38_merged.bed"), sep="\t", quote = F, row.names = F, col.names = T)
+
+colnames(renamed_genes)[which(! colnames(renamed_genes) %in% colnames(translated_genes))]
+colnames(translated_genes)[which(! colnames(translated_genes) %in% colnames(renamed_genes))]
+
+translated_genes
+```
+
+## Intersect the lifted coordinates of the genes without a gene name to gencode hg38 vs 38
+```{r}
+renamed_genes_lift_hg38_intersect_hg38 <- fread(paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_renamed_genes_hg38_intersect.bed"), data.table = F)
+renamed_genes_lift_hg38_intersect_hg38 <- renamed_genes_lift_hg38_intersect_hg38[,which(colnames(renamed_genes_lift_hg38_intersect_hg38) != "dot")]
+
+renamed_genes_lift_hg38_intersect_hg38 <- renamed_genes_lift_hg38_intersect_hg38 %>% 
+  rename("chr_hg38" = "chr_lift_hg38", 
+         "start_hg38" = "start_lift_hg38",
+         "end_hg38" = "end_lift_hg38",
+         "strand_hg38" = "strand_lift_hg38") %>% 
+  left_join(renamed_genes) 
+
+write.table(renamed_genes_lift_hg38_intersect_hg38, paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_renamed_genes_lift_hg38_intersect_gencode.bed"), sep="\t", quote = F, row.names = F, col.names = T)
+
+renamed_genes_lift_hg38_intersect_hg38
+```
+
+## Bind both dataframes 
+```{r}
+all_genes_PTERV1 <- merge(renamed_genes_lift_hg38_intersect_hg38, translated_genes, all = T)
+
+write.table(all_genes_PTERV1, paste0(path, "pantro6_all_refseq_simple_intersect_PTERV1s_genes_lift_hg38_intersect_gencode_complete.bed"), sep="\t", quote = F, row.names = F, col.names = T)
+
+all_genes_PTERV1
+```
+
+
+
