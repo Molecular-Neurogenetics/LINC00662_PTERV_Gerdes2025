@@ -1,0 +1,2 @@
+hg38.10kb_bins.ONT_HS1_HS2_basecalls_5mC_5hmC_hg38.sorted.cohort.segmeth.tsv filter=lfs diff=lfs merge=lfs -text
+panTro6.10kb_bins.ONT_PT1_PT2_basecalls_5mC_5hmC_panTro6.sorted.cohort.segmeth.tsv filter=lfs diff=lfs merge=lfs -text
